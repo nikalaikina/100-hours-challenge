@@ -1,8 +1,14 @@
 package nikalaikina.challenge
 
-import _root_.io.chrisdavenport.log4cats._
+import io.chrisdavenport.log4cats._
+import cats.Monad
 import cats.effect.Sync
-import cats.implicits._
+import cats.syntax.try_._
+import cats.syntax.flatMap._
+import cats.syntax.functor._
+import cats.syntax.apply._
+import cats.syntax.option._
+import cats.instances.either._
 import fs2._
 import nikalaikina.api.{ChatId, StreamingBotAPI}
 import nikalaikina.api.dto.BotMessage
@@ -11,7 +17,7 @@ import nikalaikina.challenge.BotCommand._
 import scala.language.higherKinds
 import scala.util.{Random, Try}
 
-class BotLogic[F[_]](
+class BotLogic[F[_]: Monad](
   api: StreamingBotAPI[F],
   storage: TaskStorage[F],
   logger: Logger[F])(
@@ -86,20 +92,22 @@ object BotCommand {
   case class ShowProgress(chatId: ChatId) extends BotCommand
   case class AddEntry(chatId: ChatId, task: Task) extends BotCommand
 
-  def fromRawMessage(msg: BotMessage): Option[BotCommand] = msg.text.map {
+  def fromRawMessage(msg: BotMessage): Option[BotCommand] = msg.text.flatMap {
     case `help` | "/start" =>
-      ShowHelp(msg.chat.id)
+      ShowHelp(msg.chat.id).some
     case `show` =>
-      ShowProgress(msg.chat.id)
+      ShowProgress(msg.chat.id).some
     case `remove` =>
-      RemoveTask(msg.chat.id, msg.forward_from_message_id.get)
+      RemoveTask(msg.chat.id, msg.forward_from_message_id.get).some
     case text =>
-      val description :: tag :: spentStr :: _ = text.split("\n").toList
-      val spent = (Try(spentStr.toDouble).getOrElse(1d) * 60).toInt
-      AddEntry(
-        msg.chat.id,
-        Task(msg.message_id, msg.chat.id, tag, description, spent)
-      )
+      Try {
+        val description :: tag :: spentStr :: _ = text.split("\n").toList
+        val spent = (spentStr.toDouble * 60).toInt
+        AddEntry(
+          chatId = msg.chat.id,
+          task = Task(msg.message_id, msg.chat.id, tag, description, spent)
+        )
+      }.liftTo[Either[Throwable, ?]].toOption
   }
 
   val help = "?"
