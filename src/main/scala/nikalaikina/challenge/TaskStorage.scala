@@ -1,33 +1,42 @@
 package nikalaikina.challenge
 
-import cats.Functor
-import cats.effect.concurrent.Ref
-import cats.implicits._
+import cats.Monad
+import cats.syntax.functor._
+import doobie.implicits._
+import doobie.util.transactor.Transactor
 import nikalaikina.api.ChatId
 
 import scala.language.higherKinds
 
 trait TaskStorage[F[_]] {
-  def addItem(chatId: ChatId, item: Task): F[Unit]
+  def addItem(item: Task): F[Unit]
   def getItems(chatId: ChatId): F[List[Task]]
   def clearList(chatId: ChatId): F[Unit]
   def remove(chatId: ChatId, id: Long): F[Unit]
 }
 
-class InMemoryTaskStorage[F[_] : Functor](
-  private val ref: Ref[F, Map[ChatId, List[Task]]]) extends TaskStorage[F] {
+class PersistentTaskStorage[F[_]: Monad](db: Transactor[F]) extends TaskStorage[F] {
 
-  def addItem(chatId: ChatId, item: Task): F[Unit] =
-    ref.update(m => m.updated(chatId, item :: m.getOrElse(chatId, Nil))).void
+  def addItem(item: Task): F[Unit] = {
+    import item._
+    sql"INSERT into tasks (id, chatId, tag, description, spent) values ($id, $chatId, $tag, $description, $spent)"
+      .update.run.transact(db).void
+  }
 
-  def getItems(chatId: ChatId): F[List[Task]] =
-    ref.get.map(_.getOrElse(chatId, Nil))
+  def getItems(chatId: ChatId): F[List[Task]] = {
+    sql"SELECT id, chatId, tag, description, spent FROM tasks WHERE chatId = $chatId"
+      .query[Task].to[List].transact(db)
+  }
 
-  def clearList(chatId: ChatId): F[Unit] =
-    ref.update(_ - chatId).void
+  def clearList(chatId: ChatId): F[Unit] = {
+    sql"DELETE FROM tasks WHERE chatId = $chatId"
+      .update.run.transact(db).void
+  }
 
-  def remove(chatId: ChatId, id: Long): F[Unit] =
-    ref.update(m => m.updated(chatId, m.getOrElse(chatId, Nil).filter(_.id != chatId))).void
+  def remove(chatId: ChatId, id: Long): F[Unit] = {
+    sql"DELETE FROM tasks WHERE chatId = $chatId AND id = $id"
+      .update.run.transact(db).void
+  }
 }
 
 case class Task(id: Long, chatId: ChatId, tag: String, description: String, spent: Int)

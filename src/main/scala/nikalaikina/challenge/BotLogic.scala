@@ -23,9 +23,6 @@ class BotLogic[F[_]: Monad](
   logger: Logger[F])(
   implicit F: Sync[F]) {
 
-  /**
-    * Launches the bot process
-    */
   def launch: Stream[F, Unit] = pollCommands.evalMap(handleCommand)
 
   private def pollCommands: Stream[F, BotCommand] = for {
@@ -36,7 +33,7 @@ class BotLogic[F[_]: Monad](
   private def handleCommand(command: BotCommand): F[Unit] = command match {
     case c: RemoveTask => removeTask(c.chatId, c.taskId)
     case c: ShowProgress => showTodoList(c.chatId)
-    case c: AddEntry => addItem(c.chatId, c.task)
+    case c: AddEntry => addItem(c.task)
     case c: ShowHelp => api.sendMessage(c.chatId, List(
       "This bot stores your progress on the subjects. Commands:",
       s"`$help` - show this help message",
@@ -65,10 +62,10 @@ class BotLogic[F[_]: Monad](
     _ <- logger.info(s"tasks queried for chat $chatId") *> api.sendMessage(chatId, msg)
   } yield ()
 
-  private def addItem(chatId: ChatId, item: Task): F[Unit] = for {
-    _ <- storage.addItem(chatId, item)
+  private def addItem(item: Task): F[Unit] = for {
+    _ <- storage.addItem(item)
     response <- F.suspend(F.catchNonFatal(Random.shuffle(List("Ok!", "Sure!", "Noted", "Certainly!")).head))
-    _ <- logger.info(s"task added for chat $chatId") *> api.sendMessage(chatId, response)
+    _ <- logger.info(s"task added for chat ${item.chatId}") *> api.sendMessage(item.chatId, response)
   } yield ()
 }
 
