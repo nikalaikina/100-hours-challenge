@@ -10,27 +10,26 @@ import io.circe.Decoder
 import io.circe.generic.auto._
 import io.circe.generic.semiauto._
 import nikalaikina.api.Http4SBotAPI
-import nikalaikina.api.dto.{BotResponse, BotUpdate}
+import nikalaikina.{BotResponse, Update}
 import org.http4s._
 import org.http4s.circe._
 import org.http4s.client.blaze.BlazeClientBuilder
 
 import scala.concurrent.ExecutionContext.global
-import scala.language.higherKinds
-
 
 class TodoListBotProcess[F[_]: Effect](token: String, db: Transactor[F]) {
 
-  implicit val decoder: Decoder[BotResponse[List[BotUpdate]]] = deriveDecoder[BotResponse[List[BotUpdate]]]
-  implicit val eDecoder: EntityDecoder[F, BotResponse[List[BotUpdate]]] = jsonOf
+  implicit val decoder: Decoder[BotResponse[List[Update]]] = deriveDecoder[BotResponse[List[Update]]]
+  implicit val eDecoder: EntityDecoder[F, BotResponse[List[Update]]] = jsonOf
 
   def run(implicit F: ConcurrentEffect[F]): Stream[F, Unit] = {
     val client = Stream.resource(BlazeClientBuilder[F](global).resource).flatMap { client =>
       val x = for {
         logger <- Slf4jLogger.create[F]
-        storage = new PersistentTaskStorage(db)
+        people = new PeopleStorage(db)
+        likes = new LikeStorage(db)
         botAPI <- F.delay(new Http4SBotAPI(token, client, logger))
-        todoListBot <- F.delay(new BotLogic(botAPI, storage, logger))
+        todoListBot <- F.delay(new BotLogic(botAPI, people, likes, logger))
       } yield todoListBot.launch
       Stream.force(x)
     }

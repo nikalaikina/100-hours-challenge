@@ -5,8 +5,6 @@ import cats.syntax.functor._
 import fs2.Stream
 import nikalaikina.challenge.config.Config
 
-import scala.language.higherKinds
-
 object App extends IOApp {
 
   override def run(args: List[String]): IO[ExitCode] = {

@@ -6,8 +6,6 @@ import doobie.util.ExecutionContexts
 import nikalaikina.challenge.config.DatabaseConfig
 import org.flywaydb.core.Flyway
 
-import scala.language.higherKinds
-
 object Database {
   def transactor[F[_]: Async: ContextShift](config: DatabaseConfig): Resource[F, HikariTransactor[F]] = {
     for {

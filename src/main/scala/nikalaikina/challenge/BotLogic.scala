@@ -1,113 +1,95 @@
 package nikalaikina.challenge
 
-import io.chrisdavenport.log4cats._
 import cats.Monad
 import cats.effect.Sync
-import cats.syntax.try_._
+import cats.instances.either._
+import cats.syntax.apply._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
-import cats.syntax.apply._
 import cats.syntax.option._
-import cats.instances.either._
+import cats.syntax.try_._
+import io.chrisdavenport.log4cats._
 import fs2._
-import nikalaikina.api.{ChatId, StreamingBotAPI}
-import nikalaikina.api.dto.BotMessage
+import nikalaikina.{BotMessage, CallbackQuery, InlineKeyboardButton, Update, User}
+import nikalaikina.api.{StreamingBotAPI, UserId}
 import nikalaikina.challenge.BotCommand._
 
-import scala.language.higherKinds
 import scala.util.{Random, Try}
 
 class BotLogic[F[_]: Monad](
-  api: StreamingBotAPI[F],
-  storage: TaskStorage[F],
-  logger: Logger[F])(
+                             api: StreamingBotAPI[F],
+                             people: PeopleStorage[F],
+                             likes: LikeStorage[F],
+                             logger: Logger[F])(
   implicit F: Sync[F]) {
 
   def launch: Stream[F, Unit] = pollCommands.evalMap(handleCommand)
 
   private def pollCommands: Stream[F, BotCommand] = for {
     update <- api.pollUpdates(0)
-    command <- Stream.emits(update.message.flatMap(BotCommand.fromRawMessage).toSeq)
+    command <- Stream.emits(BotCommand.fromRawMessage(update).toSeq)
   } yield command
 
-  private def handleCommand(command: BotCommand): F[Unit] = command match {
-    case c: RemoveTask => removeTask(c.chatId, c.taskId)
-    case c: ShowProgress => showTodoList(c.chatId)
-    case c: AddEntry => addItem(c.task)
-    case c: ShowHelp => api.sendMessage(c.chatId, List(
-      "This bot stores your progress on the subjects. Commands:",
-      s"`$help` - show this help message",
-      s"`$show` - show current progress",
-      s"`$remove` - removes task",
-      s"description\ntag\nhours - adds done task",
-    ).mkString("\n"))
-  }
-
-  private def removeTask(chatId: ChatId, taskId: Int): F[Unit] = for {
-    _ <- storage.remove(chatId, taskId)
-    _ <- logger.info(s"task $taskId is removed") *> api.sendMessage(chatId, "Task Is removed!")
-  } yield ()
-
-  private def showTodoList(chatId: ChatId): F[Unit] = for {
-    items <- storage.getItems(chatId)
-    msg = if (items.isEmpty) {
-      "You have no tasks done!"
-    } else {
-      s"""
-         |Your progress is:
-         |
-         |${FormatUtils.prettyPrintProgress(items)}
-      """.stripMargin
+  private def handleCommand(command: BotCommand): F[Unit] = {
+    implicit val userId: UserId = command.userId
+    command match {
+      case c: AddEntry => addItem(c.person) *> sendPerson
+      case c: Like => like(c) *> sendPerson
+      case c: ShowHelp => api.sendMessage(c.userId, List(
+        "This bot stores your progress on the subjects. Commands:",
+        s"`$help` - show this help message",
+        s"description\ncontact - starts the game",
+      ).mkString("\n"))
     }
-    _ <- logger.info(s"tasks queried for chat $chatId") *> api.sendMessage(chatId, msg)
-  } yield ()
-
-  private def addItem(item: Task): F[Unit] = for {
-    _ <- storage.addItem(item)
-    response <- F.suspend(F.catchNonFatal(Random.shuffle(List("Ok!", "Sure!", "Noted", "Certainly!")).head))
-    _ <- logger.info(s"task added for chat ${item.chatId}") *> api.sendMessage(item.chatId, response)
-  } yield ()
-}
-
-object FormatUtils {
-  def prettyPrintProgress(tasks: List[Task]): String = {
-    tasks.groupBy(_.tag).map { case (tag, done) =>
-        val timePassed = math.min(100, done.map(_.spent).sum / 60)
-        s"`[${"▓" * timePassed}${"_" * (100 - timePassed)}]\t$tag`"
-    }.mkString("\n")
   }
+
+  private def addItem(item: Person): F[Unit] = people.add(item)
+
+  private def like(like: Like): F[Unit] = likes.like(like.userId, like.person, like.like)
+
+  private def sendPerson(implicit userId: UserId): F[Unit] = for {
+    people <- people.getAll
+    msg = Random.shuffle(people).headOption.fold("No people left")(_.description)
+    buttons = people.headOption.fold(List.empty[InlineKeyboardButton])(person => List(
+      InlineKeyboardButton("Like", s"like ${person.userId}"),
+      InlineKeyboardButton("Dislike", s"dislike ${person.userId}")
+    ))
+    _ <- api.sendMessage(userId, msg, buttons)
+  } yield ()
 }
 
 sealed trait BotCommand {
-  val chatId: ChatId
+  val userId: UserId
 }
 
 object BotCommand {
 
-  case class ShowHelp(chatId: ChatId) extends BotCommand
-  case class RemoveTask(chatId: ChatId, taskId: Int) extends BotCommand
-  case class ShowProgress(chatId: ChatId) extends BotCommand
-  case class AddEntry(chatId: ChatId, task: Task) extends BotCommand
+  case class ShowHelp(userId: UserId) extends BotCommand
+  case class AddEntry(userId: UserId, person: Person) extends BotCommand
+  case class Like(userId: UserId, person: UserId, like: Boolean) extends BotCommand
 
-  def fromRawMessage(msg: BotMessage): Option[BotCommand] = msg.text.flatMap {
-    case `help` | "/start" =>
-      ShowHelp(msg.chat.id).some
-    case `show` =>
-      ShowProgress(msg.chat.id).some
-    case `remove` =>
-      RemoveTask(msg.chat.id, msg.forward_from_message_id.get).some
-    case text =>
-      Try {
-        val description :: tag :: spentStr :: _ = text.split("\n").toList
-        val spent = (spentStr.toDouble * 60).toInt
-        AddEntry(
-          chatId = msg.chat.id,
-          task = Task(msg.message_id, msg.chat.id, tag, description, spent)
-        )
-      }.liftTo[Either[Throwable, ?]].toOption
+  def fromRawMessage(msg: Update): Option[BotCommand] = {
+    def textCommand = msg.message flatMap {
+      case BotMessage(user, Some(`help` | `start`)) =>
+        ShowHelp(user.id).some
+      case BotMessage(user, Some(text)) =>
+        Try {
+          val description :: contact :: _ = text.split("\n").toList
+          AddEntry(user.id, Person(user.id, description, contact))
+        }.liftTo[Either[Throwable, *]].toOption
+      case _ => None
+    }
+
+    def callbackCommand = msg.callback_query.collect {
+      case CallbackQuery(from, Some(data)) =>
+        data.split(" ").toList match {
+          case like :: userId :: Nil => Some(Like(from.id, userId.toLong, like == "like"))
+          case _ => None
+        }
+    }.flatten
+    callbackCommand orElse textCommand
   }
 
   val help = "?"
-  val show = "/show"
-  val remove = "remove"
+  val start = "/start"
 }

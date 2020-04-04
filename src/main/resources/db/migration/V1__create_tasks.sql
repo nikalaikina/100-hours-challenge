@@ -1,7 +1,12 @@
-CREATE TABLE tasks (
-  id BIGINT PRIMARY KEY,
-  chatId BIGINT,
-  tag varchar(250),
+CREATE TABLE people (
+  userId BIGINT PRIMARY KEY,
   description varchar(1000),
-  spent INTEGER
+  contact varchar(1000)
+);
+
+CREATE TABLE likes (
+  userId BIGINT,
+  person BIGINT,
+  likes BOOLEAN,
+  PRIMARY KEY(userId, person)
 );
