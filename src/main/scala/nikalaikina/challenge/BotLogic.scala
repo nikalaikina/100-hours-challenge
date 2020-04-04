@@ -1,8 +1,10 @@
 package nikalaikina.challenge
 
 import cats.Monad
+import cats.data.Nested
 import cats.effect.Sync
 import cats.instances.either._
+import cats.syntax.traverse._
 import cats.syntax.apply._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
@@ -34,7 +36,7 @@ class BotLogic[F[_]: Monad](
     implicit val userId: UserId = command.userId
     command match {
       case c: AddEntry => addItem(c.person) *> sendPerson
-      case c: Like => like(c) *> sendPerson
+      case c: Like => like(c) *> checkLike(c) *> sendPerson
       case c: ShowHelp => api.sendMessage(c.userId, List(
         "This bot stores your progress on the subjects. Commands:",
         s"`$help` - show this help message",
@@ -49,13 +51,34 @@ class BotLogic[F[_]: Monad](
 
   private def sendPerson(implicit userId: UserId): F[Unit] = for {
     people <- people.getAll
-    msg = Random.shuffle(people).headOption.fold("No people left")(_.description)
+    msg = Random.shuffle(people.filter(_.userId != userId)).headOption.fold("No people left")(_.description)
     buttons = people.headOption.fold(List.empty[InlineKeyboardButton])(person => List(
       InlineKeyboardButton("Like", s"like ${person.userId}"),
       InlineKeyboardButton("Dislike", s"dislike ${person.userId}")
     ))
     _ <- api.sendMessage(userId, msg, buttons)
   } yield ()
+
+  private def checkLike(like: Like): F[Unit] = for {
+    likes <- likes.get(like.person)
+    mutual = likes.contains(like.userId)
+    _ <- if (mutual) { for {
+      _ <- matchMsg(like.person).flatMap(_.fold(F.unit)(api.sendMessage(like.userId, _)))
+      _ <- matchMsg(like.userId).flatMap(_.fold(F.unit)(api.sendMessage(like.person, _)))
+    } yield () } else F.unit
+  } yield ()
+
+  private def matchMsg(about: UserId): F[Option[String]] = {
+    people.get(about).map(_.map { person =>
+      s"""
+         |You got match!
+         |
+         |${person.description}
+         |
+         |Contact: ${person.contact}
+         |""".stripMargin
+    })
+  }
 }
 
 sealed trait BotCommand {

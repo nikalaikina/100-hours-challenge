@@ -18,6 +18,12 @@ class PeopleStorage[F[_]: Monad: ({type L[T[_]] = Bracket[T, Throwable]})#L](db:
       .update.run.transact(db).void
   }
 
+  def get(userId: UserId): F[Option[Person]] = {
+    sql"SELECT userId, description, contact FROM people WHERE userId = $userId"
+      .query[Person].to[List].transact(db).map(_.headOption)
+  }
+
+
   val getAll: F[List[Person]] = {
     sql"SELECT userId, description, contact FROM people"
       .query[Person].to[List].transact(db)
