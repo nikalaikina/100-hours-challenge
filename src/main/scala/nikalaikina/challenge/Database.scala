@@ -19,7 +19,7 @@ object Database {
         config.user,
         config.password,
         ce, // await connection here
-        te  // execute JDBC operations here
+        Blocker.liftExecutionContext(te)  // execute JDBC operations here
       )
     } yield xa
   }

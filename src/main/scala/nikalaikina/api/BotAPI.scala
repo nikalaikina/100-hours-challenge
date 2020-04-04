@@ -33,9 +33,9 @@ class Http4SBotAPI[F[_]](
   def sendMessage(chatId: ChatId, message: String): F[Unit] = {
 
     val uri = botApiUri / "sendMessage" =? Map(
-      "chat_id" -> Seq(chatId.toString),
-      "parse_mode" -> Seq("Markdown"),
-      "text" -> Seq(message)
+      "chat_id" -> List(chatId.toString),
+      "parse_mode" -> List("Markdown"),
+      "text" -> List(message)
     )
 
     client.expect[Unit](uri)
@@ -49,9 +49,9 @@ class Http4SBotAPI[F[_]](
   private def requestUpdates(offset: Offset): F[(Offset, BotResponse[List[BotUpdate]])] = {
 
     val uri = botApiUri / "getUpdates" =? Map(
-      "offset" -> Seq((offset + 1).toString),
-      "timeout" -> Seq("0.5"), // timeout to throttle the polling
-      "allowed_updates" -> Seq("""["message"]""")
+      "offset" -> List((offset + 1).toString),
+      "timeout" -> List("0.5"), // timeout to throttle the polling
+      "allowed_updates" -> List("""["message"]""")
     )
 
     client.expect[BotResponse[List[BotUpdate]]](uri)

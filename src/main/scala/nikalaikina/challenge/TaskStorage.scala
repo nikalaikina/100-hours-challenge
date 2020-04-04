@@ -5,8 +5,7 @@ import cats.syntax.functor._
 import doobie.implicits._
 import doobie.util.transactor.Transactor
 import nikalaikina.api.ChatId
-
-import scala.language.higherKinds
+import cats.effect._
 
 trait TaskStorage[F[_]] {
   def addItem(item: Task): F[Unit]
@@ -15,7 +14,7 @@ trait TaskStorage[F[_]] {
   def remove(chatId: ChatId, id: Long): F[Unit]
 }
 
-class PersistentTaskStorage[F[_]: Monad](db: Transactor[F]) extends TaskStorage[F] {
+class PersistentTaskStorage[F[_]: Monad: ({type L[T[_]] = Bracket[T, Throwable]})#L](db: Transactor[F]) extends TaskStorage[F] {
 
   def addItem(item: Task): F[Unit] = {
     import item._
