@@ -16,7 +16,7 @@ package object config {
 
     def load(): IO[Config] = {
       IO {
-        loadConfig[Config](ConfigFactory.load())
+        ConfigSource.fromConfig(ConfigFactory.load()).load[Config]
       }.flatMap {
         case Left(e) => IO.raiseError[Config](new ConfigReaderException[Config](e))
         case Right(config) => IO.pure(config)

@@ -22,5 +22,9 @@ class LikeStorage[F[_]: Monad: ({type L[T[_]] = Bracket[T, Throwable]})#L](db: T
       .query[UserId].to[List].transact(db)
   }
 
-}
+  def getSeen(userId: UserId): F[List[UserId]] = {
+    sql"SELECT person FROM likes WHERE userId = $userId"
+      .query[UserId].to[List].transact(db)
+  }
 
+}

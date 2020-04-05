@@ -4,17 +4,20 @@ import cats.Monad
 import cats.data.Nested
 import cats.effect.Sync
 import cats.instances.either._
-import cats.syntax.traverse._
+import cats.instances.list._
+import cats.instances.option._
+import cats.syntax.applicative._
 import cats.syntax.apply._
 import cats.syntax.flatMap._
 import cats.syntax.functor._
 import cats.syntax.option._
+import cats.syntax.traverse._
 import cats.syntax.try_._
 import io.chrisdavenport.log4cats._
 import fs2._
-import nikalaikina.{BotMessage, CallbackQuery, InlineKeyboardButton, Update, User}
 import nikalaikina.api.{StreamingBotAPI, UserId}
 import nikalaikina.challenge.BotCommand._
+import nikalaikina.{BotMessage, CallbackQuery, InlineKeyboardButton, Update}
 
 import scala.util.{Random, Try}
 
@@ -50,26 +53,30 @@ class BotLogic[F[_]: Monad](
   private def like(like: Like): F[Unit] = likes.like(like.userId, like.person, like.like)
 
   private def sendPerson(implicit userId: UserId): F[Unit] = for {
-    people <- people.getAll
-    msg = Random.shuffle(people.filter(_.userId != userId)).headOption.fold("No people left")(_.description)
-    buttons = people.headOption.fold(List.empty[InlineKeyboardButton])(person => List(
+    allPeople <- people.getAll
+    seen <- likes.getSeen(userId)
+    people = allPeople.filter(p => p.userId != userId && !seen.contains(p.userId))
+    person = Random.shuffle(people).headOption
+    msg = person.fold("No people left")(_.description)
+    buttons = person.map(person => List(
       InlineKeyboardButton("Like", s"like ${person.userId}"),
       InlineKeyboardButton("Dislike", s"dislike ${person.userId}")
-    ))
+    )).orEmpty
     _ <- api.sendMessage(userId, msg, buttons)
   } yield ()
 
   private def checkLike(like: Like): F[Unit] = for {
     likes <- likes.get(like.person)
     mutual = likes.contains(like.userId)
-    _ <- if (mutual) { for {
-      _ <- matchMsg(like.person).flatMap(_.fold(F.unit)(api.sendMessage(like.userId, _)))
-      _ <- matchMsg(like.userId).flatMap(_.fold(F.unit)(api.sendMessage(like.person, _)))
-    } yield () } else F.unit
+    _ <- (sendMatch(like.userId, like.person) *> sendMatch(like.person, like.userId)).whenA(mutual)
   } yield ()
 
+  private def sendMatch(userId: UserId, person: UserId) = {
+    matchMsg(userId).flatMap(_.traverse(api.sendMessage(person, _)))
+  }
+
   private def matchMsg(about: UserId): F[Option[String]] = {
-    people.get(about).map(_.map { person =>
+    Nested(people.get(about)).map { person =>
       s"""
          |You got match!
          |
@@ -77,7 +84,7 @@ class BotLogic[F[_]: Monad](
          |
          |Contact: ${person.contact}
          |""".stripMargin
-    })
+    }.value
   }
 }
 
